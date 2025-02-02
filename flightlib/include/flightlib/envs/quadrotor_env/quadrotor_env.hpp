@@ -85,14 +85,16 @@ class QuadrotorEnv final : public EnvBase {
 
 
   // Define reward for training
-  Scalar pos_coeff_, ori_coeff_, lin_vel_coeff_, ang_vel_coeff_;
+  Scalar pos_coeff_, ori_coeff_, lin_vel_coeff_, ang_vel_coeff_, terminal_reward, survival_reward;
 
   // observations and actions (for RL)
   Vector<quadenv::kNObs> pi_obs_;
   Vector<quadenv::kNAct> pi_act_;
 
   // reward function design (for model-free reinforcement learning)
-  Vector<3> goal_pos_;
+  Vector<3> goal_pos_, goal_ori_, goal_linvel_, goal_angvel_;
+
+  std::vector<double> goal_pos, goal_ori, goal_linvel, goal_angvel;
 
   // action and observation normalization (for learning)
   Vector<quadenv::kNAct> act_mean_;

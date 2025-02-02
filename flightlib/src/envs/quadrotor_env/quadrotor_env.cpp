@@ -29,7 +29,7 @@ QuadrotorEnv::QuadrotorEnv(const YAML::Node &cfg_node, const int env_id)
 
 void QuadrotorEnv::init() {
   //
-  goal_pos_ << 0.0, 0.0, 5.0;
+  goal_pos_ << goal_pos[0], goal_pos[1], goal_pos[2];
   //
   quad_ptr_ = std::make_shared<Quadrotor>();
   // update dynamics
@@ -94,7 +94,7 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs) {
   // reset position
   quad_state_.x(QS::POSX) = uniform_dist_(random_gen_);
   quad_state_.x(QS::POSY) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::POSZ) = uniform_dist_(random_gen_) + 5;
+  quad_state_.x(QS::POSZ) = uniform_dist_(random_gen_)+3;
   if (quad_state_.x(QS::POSZ) < -0.0)
     quad_state_.x(QS::POSZ) = -quad_state_.x(QS::POSZ);
   // reset linear velocity
@@ -107,7 +107,21 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs) {
   quad_state_.x(QS::ATTY) = uniform_dist_(random_gen_);
   quad_state_.x(QS::ATTZ) = uniform_dist_(random_gen_);
   quad_state_.qx /= quad_state_.qx.norm();
-
+  // quad_state_.x(QS::POSX) = 0;
+  // quad_state_.x(QS::POSY) = 0;
+  // quad_state_.x(QS::POSZ) = 0.15;
+  // if (quad_state_.x(QS::POSZ) < -0.0)
+  //   quad_state_.x(QS::POSZ) = -quad_state_.x(QS::POSZ);
+  // // reset linear velocity
+  // quad_state_.x(QS::VELX) = 0;
+  // quad_state_.x(QS::VELY) = 0;
+  // quad_state_.x(QS::VELZ) = 0;
+  // // reset orientation
+  // quad_state_.x(QS::ATTW) = 1;
+  // quad_state_.x(QS::ATTX) = 0;
+  // quad_state_.x(QS::ATTY) = 0;
+  // quad_state_.x(QS::ATTZ) = 0;
+  // quad_state_.qx /= quad_state_.qx.norm();
   // reset quadrotor with random states
   quad_ptr_->reset(quad_state_);
 
@@ -191,7 +205,7 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
   const Scalar ang_vel_reward = ang_vel_coeff_ * quad_state_.w.norm();
 
   const Scalar total_reward =
-    pos_reward + ori_reward + lin_vel_reward + ang_vel_reward;
+    pos_reward + ori_reward + lin_vel_reward + ang_vel_reward + survival_reward;
 
   reward << pos_reward, ori_reward, lin_vel_reward, ang_vel_reward,
     total_reward;
@@ -200,7 +214,7 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
 
 bool QuadrotorEnv::isTerminalState(Scalar &reward) {
   if (quad_state_.x(QS::POSZ) <= 0.02) {
-    reward = -1.0;
+    reward = terminal_reward;
     return true;
   }
 
@@ -291,10 +305,23 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
     ori_coeff_ = cfg["rewards"]["ori_coeff"].as<Scalar>();
     lin_vel_coeff_ = cfg["rewards"]["lin_vel_coeff"].as<Scalar>();
     ang_vel_coeff_ = cfg["rewards"]["ang_vel_coeff"].as<Scalar>();
+    terminal_reward = cfg["rewards"]["terminal"].as<Scalar>();
+    survival_reward = cfg["rewards"]["survival"].as<Scalar>();
     // load reward settings
     reward_names_ = cfg["rewards"]["names"].as<std::vector<std::string>>();
 
     rew_dim_ = cfg["rewards"]["names"].as<std::vector<std::string>>().size();
+
+    if (cfg["rewards"]["goal_state"]) {
+      goal_pos = cfg["rewards"]["goal_state"]["position"].as<std::vector<double>>();
+      goal_ori = cfg["rewards"]["goal_state"]["rotation"].as<std::vector<double>>();
+      goal_linvel = cfg["rewards"]["goal_state"]["lin_vel"].as<std::vector<double>>();
+      goal_angvel = cfg["rewards"]["goal_state"]["ang_vel"].as<std::vector<double>>();
+    }
+    else {
+      logger_.error("Cannot load [goalstate] parameters");
+      return false;
+    }
   } else {
     logger_.error("Cannot load [rewards] parameters");
     return false;

@@ -5,7 +5,7 @@ unity:
 simulation:
   seed: 1
   sim_dt: 0.02
-  max_t: 5.0
+  max_t: 10.0
   num_envs: 100
   num_threads: 10
   rotor_ctrl: 1 # 0 single rotor, 1 body rate
@@ -32,6 +32,8 @@ rewards:
   ori_coeff: -0.002 # reward coefficient for orientation
   lin_vel_coeff: -0.0001 # reward coefficient for linear velocity
   ang_vel_coeff: -0.0001 # reward coefficient for angular velocity
+  terminal: -5.0
+  survival: 0.002
   names:
     [
       "pos_penalty",
