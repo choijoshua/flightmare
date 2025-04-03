@@ -28,9 +28,9 @@ QuadrotorEnv::QuadrotorEnv(const YAML::Node &cfg_node, const int env_id)
 }
 
 void QuadrotorEnv::init() {
-  //
+  // load parameters
+  loadParam(cfg_);
   goal_pos_ << goal_pos[0], goal_pos[1], goal_pos[2];
-  //
   quad_ptr_ = std::make_shared<Quadrotor>();
   // update dynamics
   QuadrotorDynamics dynamics;
@@ -46,10 +46,7 @@ void QuadrotorEnv::init() {
   // define input and output dimension for the environment
   obs_dim_ = quadenv::kNObs;
   act_dim_ = quadenv::kNAct;
-  rew_dim_ = 0;
 
-  // load parameters
-  loadParam(cfg_);
 
   // add camera
   if (use_camera_) {
