@@ -30,7 +30,9 @@ QuadrotorEnv::QuadrotorEnv(const YAML::Node &cfg_node, const int env_id)
 void QuadrotorEnv::init() {
   // load parameters
   loadParam(cfg_);
-  goal_pos_ << goal_pos[0], goal_pos[1], goal_pos[2];
+  init_pos_ << init_pos[0], init_pos[1], init_pos[2];
+  init_ori_ << init_ori[0], init_ori[1], init_ori[2];
+  current_gate_idx = 0;
   quad_ptr_ = std::make_shared<Quadrotor>();
   // update dynamics
   QuadrotorDynamics dynamics;
@@ -89,37 +91,21 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs) {
 
   // randomly reset the quadrotor state
   // reset position
-  quad_state_.x(QS::POSX) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::POSY) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::POSZ) = uniform_dist_(random_gen_)+3;
-  if (quad_state_.x(QS::POSZ) < -0.0)
-    quad_state_.x(QS::POSZ) = -quad_state_.x(QS::POSZ);
+  quad_state_.x(QS::POSX) = init_pos_[0];
+  quad_state_.x(QS::POSY) = init_pos_[1];
+  quad_state_.x(QS::POSZ) = init_pos_[2];
   // reset linear velocity
-  quad_state_.x(QS::VELX) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::VELY) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::VELZ) = uniform_dist_(random_gen_);
+  quad_state_.x(QS::VELX) = 0;
+  quad_state_.x(QS::VELY) = 0;
+  quad_state_.x(QS::VELZ) = 0;
   // reset orientation
-  quad_state_.x(QS::ATTW) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::ATTX) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::ATTY) = uniform_dist_(random_gen_);
-  quad_state_.x(QS::ATTZ) = uniform_dist_(random_gen_);
+  Quaternion quat;
+  eulerToQuaternion(quat, init_ori_);
+  quad_state_.x(QS::ATTW) = quat.w();
+  quad_state_.x(QS::ATTX) = quat.x();
+  quad_state_.x(QS::ATTY) = quat.y();
+  quad_state_.x(QS::ATTZ) = quat.z();
   quad_state_.qx /= quad_state_.qx.norm();
-  // quad_state_.x(QS::POSX) = 0;
-  // quad_state_.x(QS::POSY) = 0;
-  // quad_state_.x(QS::POSZ) = 0.15;
-  // if (quad_state_.x(QS::POSZ) < -0.0)
-  //   quad_state_.x(QS::POSZ) = -quad_state_.x(QS::POSZ);
-  // // reset linear velocity
-  // quad_state_.x(QS::VELX) = 0;
-  // quad_state_.x(QS::VELY) = 0;
-  // quad_state_.x(QS::VELZ) = 0;
-  // // reset orientation
-  // quad_state_.x(QS::ATTW) = 1;
-  // quad_state_.x(QS::ATTX) = 0;
-  // quad_state_.x(QS::ATTY) = 0;
-  // quad_state_.x(QS::ATTZ) = 0;
-  // quad_state_.qx /= quad_state_.qx.norm();
-  // reset quadrotor with random states
   quad_ptr_->reset(quad_state_);
 
   // reset control command
@@ -146,20 +132,45 @@ bool QuadrotorEnv::getObs(Ref<Vector<>> obs) {
                   obs_dim_);
     return false;
   }
+  prev_pos_ = quad_state_.p;
 
   quad_ptr_->getState(&quad_state_);
 
-  // convert quaternion to euler angle
-  Vector<9> ori = Map<Vector<>>(quad_state_.R().data(), quad_state_.R().size());
+  // quad_state_.p : P_w_bw
+  // ori : R_wb
+  // quad_state_.v : V_w_bw
 
-  // observation dim : 3 + 9 + 3 = 15
-  obs.segment<quadenv::kNObs>(quadenv::kObs) << quad_state_.p, ori,
-    quad_state_.v;
+  // P_g_bg = R_gw * P_w_bw + R_gw *(-P_w_gw)
+  // V_g_bg = R_gw * V_w_bw + R_gw *(-P_w_gw)
+  // R_gb = R_gw * R_wb
+  // P_g_g+1_g = R_gw * P_w_g+1w + R_gw *(-P_w_gw)
+  // R_g_g+1 = R_gw * R_wg+1
+  Vector<3> P_w_gw = gates_[current_gate_idx].pos;
+  Quaternion q_wg;
+  eulerToQuaternion(q_wg, gates_[current_gate_idx].ori);
+  Matrix<3,3> R_wg = q_wg.toRotationMatrix();
+  Vector<3> P_g_bg = R_wg.inverse() * (quad_state_.p - P_w_gw);
+  Vector<3> V_g_bg = R_wg.inverse() * quad_state_.v;
+  Matrix<3,3> R_gb_matrix = (R_wg.inverse() * quad_state_.R()).eval();
+  Vector<9> R_gb = Map<Vector<>>(R_gb_matrix.data(), R_gb_matrix.size());
 
-  // use the following observations if use single rotor thrusts as input
-  // observation dim : 3 + 9 + 3 + 3= 18
-  // obs.segment<quadenv::kNObs>(quadenv::kObs) << quad_state_.p, ori,
-  //   quad_state_.v, quad_state_.w;
+  Vector<3> P_g_g1g;
+  P_g_g1g << 0, 0, 0;
+  Vector<9> R_gg1;
+  R_gg1 << 1, 0, 0, 0, 1, 0, 0, 0, 1;
+
+  if (current_gate_idx < num_gates-1) {
+    Vector<3> P_w_g1w = gates_[current_gate_idx+1].pos;
+    Quaternion q_wg1;
+    eulerToQuaternion(q_wg1, gates_[current_gate_idx+1].ori);
+    Matrix<3,3> R_wg1 = q_wg1.toRotationMatrix();
+    P_g_g1g = R_wg.inverse() * (P_w_g1w - P_w_gw); // position of next gate in current gate frame
+    Matrix<3,3> R_gg1_matrix = (R_wg.inverse() * R_wg1).eval(); // frame transformation from next gate to current gate
+    R_gg1 = Map<Vector<>>(R_gg1_matrix.data(), R_gg1_matrix.size());
+  }
+
+  obs.segment<quadenv::kNObs>(quadenv::kObs) << P_g_bg, R_gb, V_g_bg, P_g_g1g, R_gg1;
+
   return true;
 }
 
@@ -187,36 +198,30 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
   getObs(obs);
 
   // ---------------------- reward function design
-  // - position tracking
-  const Scalar pos_reward = pos_coeff_ * (quad_state_.p - goal_pos_).norm();
-
-  // - orientation tracking
-  const Scalar ori_reward =
-    ori_coeff_ *
-    (quad_state_.q().toRotationMatrix().eulerAngles(2, 1, 0)).norm();
-
-  // - linear velocity tracking
-  const Scalar lin_vel_reward = lin_vel_coeff_ * quad_state_.v.norm();
-
-  // - angular velocity tracking
-  const Scalar ang_vel_reward = ang_vel_coeff_ * quad_state_.w.norm();
+  // progress reward
+  Vector<3> to_next_gate = gates_[current_gate_idx].pos - prev_pos_;
+  if (to_next_gate.norm() < 0.1 && current_gate_idx < num_gates - 1) {
+    current_gate_idx++;
+  }
+  const Scalar progress_reward = progress_coeff_ * ((gates_[current_gate_idx].pos - prev_pos_).norm() - (gates_[current_gate_idx].pos - quad_state_.p).norm());
+  const Scalar tracking_error = -tracking_coeff_ * (gates_[current_gate_idx].pos - quad_state_.p).norm();
 
   const Scalar total_reward =
-    pos_reward + ori_reward + lin_vel_reward + ang_vel_reward + survival_reward;
+    progress_reward + tracking_error;
 
-  reward << pos_reward, ori_reward, lin_vel_reward, ang_vel_reward,
+  reward << progress_reward, tracking_error,
     total_reward;
   return true;
 }
 
 bool QuadrotorEnv::isTerminalState(Scalar &reward) {
   if (quad_state_.x(QS::POSZ) <= 0.02) {
-    reward = terminal_reward;
+    reward = collision_penalty;
     return true;
   }
 
   if (cmd_.t >= max_t_ - sim_dt_) {
-    reward = 0.0;
+    reward = terminal_reward;
     return true;
   }
   return false;
@@ -298,29 +303,59 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
 
   if (cfg["rewards"]) {
     // load reinforcement learning related parameters
-    pos_coeff_ = cfg["rewards"]["pos_coeff"].as<Scalar>();
-    ori_coeff_ = cfg["rewards"]["ori_coeff"].as<Scalar>();
-    lin_vel_coeff_ = cfg["rewards"]["lin_vel_coeff"].as<Scalar>();
-    ang_vel_coeff_ = cfg["rewards"]["ang_vel_coeff"].as<Scalar>();
+    progress_coeff_ = cfg["rewards"]["progress_coeff"].as<Scalar>();
+    tracking_coeff_ = cfg["rewards"]["tracking_coeff"].as<Scalar>();
+    collision_penalty = cfg["rewards"]["collision"].as<Scalar>();
     terminal_reward = cfg["rewards"]["terminal"].as<Scalar>();
-    survival_reward = cfg["rewards"]["survival"].as<Scalar>();
     // load reward settings
     reward_names_ = cfg["rewards"]["names"].as<std::vector<std::string>>();
 
     rew_dim_ = cfg["rewards"]["names"].as<std::vector<std::string>>().size();
-
-    if (cfg["rewards"]["goal_state"]) {
-      goal_pos = cfg["rewards"]["goal_state"]["position"].as<std::vector<double>>();
-      goal_ori = cfg["rewards"]["goal_state"]["rotation"].as<std::vector<double>>();
-      goal_linvel = cfg["rewards"]["goal_state"]["lin_vel"].as<std::vector<double>>();
-      goal_angvel = cfg["rewards"]["goal_state"]["ang_vel"].as<std::vector<double>>();
-    }
-    else {
-      logger_.error("Cannot load [goalstate] parameters");
-      return false;
-    }
   } else {
     logger_.error("Cannot load [rewards] parameters");
+    return false;
+  }
+  init_pos = cfg["init_pos"].as<std::vector<double>>();
+  init_ori = cfg["init_ori"].as<std::vector<double>>();
+
+  // if (cfg["gates"]) {
+  //   gates_.clear();
+  //   num_gates = 0;
+  //   std::vector<std::string> gateKeys = cfg["gates"]["gate_order"].as<std::vector<std::string>>();
+  //   for (const std::string &key : gateKeys) {
+  //     Gate gt;
+  //     // Build the full path to the current gate's parameters.
+  //     std::vector<double> pos = cfg["gates"][key]["position"].as<std::vector<double>>();
+  //     std::vector<double> ori = cfg["gates"][key]["rotation"].as<std::vector<double>>();
+  //     // Assign the position and orientation.
+  //     gt.pos << pos[0], pos[1], pos[2];
+  //     gt.ori << ori[0], ori[1], ori[2];
+  //     num_gates++;
+  //     gt.id = num_gates;
+  //     gates_.push_back(gt);
+  //   }
+  // } else {
+  //   logger_.error("Cannot load [gate] parameters");
+  //   return false;
+  // }
+  if (cfg["gates"]) {
+    gates_.clear();
+    num_gates = 0;
+    std::vector<std::string> gateKeys = cfg["gates"]["gate_order"].as<std::vector<std::string>>();
+    for (const std::string &key : gateKeys) {
+      Gate gt;
+      // Build the full path to the current gate's parameters.
+      std::vector<double> pos = cfg["gates"][key]["position"].as<std::vector<double>>();
+      std::vector<double> ori = cfg["gates"][key]["rotation"].as<std::vector<double>>();
+      // Assign the position and orientation.
+      gt.pos << pos[0], pos[1], pos[2];
+      gt.ori << ori[0], ori[1], ori[2];
+      num_gates++;
+      gt.id = num_gates;
+      gates_.push_back(gt);
+    }
+  } else {
+    logger_.error("Cannot load [gate] parameters");
     return false;
   }
   return true;

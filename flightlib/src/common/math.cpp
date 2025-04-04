@@ -142,6 +142,26 @@ void quaternionToEuler(const Quaternion& quat, Ref<Vector<3>> euler) {
                            quat.y() * quat.y() - quat.z() * quat.z());
 }
 
+void eulerToQuaternion(Quaternion& q, const Ref<Vector<3>> euler) {
+  // Calculate half angles
+  double halfRoll = euler.x() * 0.5;
+  double halfPitch = euler.y() * 0.5;
+  double halfYaw = euler.z() * 0.5;
+  
+  // Compute sin and cos for each half angle
+  double sinRoll = std::sin(halfRoll);
+  double cosRoll = std::cos(halfRoll);
+  double sinPitch = std::sin(halfPitch);
+  double cosPitch = std::cos(halfPitch);
+  double sinYaw = std::sin(halfYaw);
+  double cosYaw = std::cos(halfYaw);
+  
+  // Calculate quaternion components
+  q.w() = cosRoll * cosPitch * cosYaw + sinRoll * sinPitch * sinYaw;
+  q.x() = sinRoll * cosPitch * cosYaw - cosRoll * sinPitch * sinYaw;
+  q.y() = cosRoll * sinPitch * cosYaw + sinRoll * cosPitch * sinYaw;
+  q.z() = cosRoll * cosPitch * sinYaw - sinRoll * sinPitch * cosYaw;
+}
 
 std::vector<Scalar> transformationRos2Unity(const Matrix<4, 4>& ros_tran_mat) {
   /// [ Transformation Matrix ] from ROS coordinate system (right hand)

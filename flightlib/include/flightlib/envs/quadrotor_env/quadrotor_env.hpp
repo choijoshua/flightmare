@@ -14,8 +14,10 @@
 #include "flightlib/common/command.hpp"
 #include "flightlib/common/logger.hpp"
 #include "flightlib/common/quad_state.hpp"
+#include "flightlib/common/math.hpp"
 #include "flightlib/common/types.hpp"
 #include "flightlib/common/utils.hpp"
+#include "flightlib/common/gate.hpp"
 #include "flightlib/envs/env_base.hpp"
 #include "flightlib/objects/quadrotor.hpp"
 #include "flightlib/sensors/rgb_camera.hpp"
@@ -28,9 +30,10 @@ enum Ctl : int {
   //
   kNQuadState = 25,
 
-  // observations
+  // observations: P_g_bg, R_gb, V_g_bg, P_g+1, R_g+1 
+  // 3 + 9 + 3 + 3 + 9
   kObs = 0,
-  kNObs = 15,
+  kNObs = 27,
 
   // control actions
   kAct = 0,
@@ -85,16 +88,19 @@ class QuadrotorEnv final : public EnvBase {
 
 
   // Define reward for training
-  Scalar pos_coeff_, ori_coeff_, lin_vel_coeff_, ang_vel_coeff_, terminal_reward, survival_reward;
-
+  Scalar progress_coeff_, tracking_coeff_, collision_penalty, terminal_reward;
   // observations and actions (for RL)
   Vector<quadenv::kNObs> pi_obs_;
   Vector<quadenv::kNAct> pi_act_;
 
   // reward function design (for model-free reinforcement learning)
-  Vector<3> goal_pos_, goal_ori_, goal_linvel_, goal_angvel_;
+  Vector<3> init_pos_, init_ori_, prev_pos_;
+  std::vector<double> init_pos, init_ori;
 
-  std::vector<double> goal_pos, goal_ori, goal_linvel, goal_angvel;
+  std::vector<Gate> gates_;
+  int current_gate_idx;
+  int num_gates;
+
 
   // action and observation normalization (for learning)
   Vector<quadenv::kNAct> act_mean_;
