@@ -32,6 +32,8 @@ void QuadrotorEnv::init() {
   loadParam(cfg_);
   init_pos_ << init_pos[0], init_pos[1], init_pos[2];
   init_ori_ << init_ori[0], init_ori[1], init_ori[2];
+  end_pos_ << end_pos[0], end_pos[1], end_pos[2];
+  end_ori_ << end_ori[0], end_ori[1], end_ori[2];
   current_gate_idx = 0;
   quad_ptr_ = std::make_shared<Quadrotor>();
   // update dynamics
@@ -107,6 +109,8 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs) {
   quad_state_.x(QS::ATTZ) = quat.z();
   quad_state_.qx /= quad_state_.qx.norm();
   quad_ptr_->reset(quad_state_);
+
+  current_gate_idx = 0;
 
   // reset control command
   cmd_.t = 0.0;
@@ -199,18 +203,35 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
 
   // ---------------------- reward function design
   // progress reward
-  Vector<3> to_next_gate = gates_[current_gate_idx].pos - prev_pos_;
-  if (to_next_gate.norm() < 0.1 && current_gate_idx < num_gates - 1) {
-    current_gate_idx++;
+  // Compute distances from the current gate position.
+  Scalar progress_reward = 0;
+  Scalar gate_pass_bonus = 0;
+  Scalar tracking_error = 0;
+  if (current_gate_idx < num_gates) {
+    const Scalar prev_dist = (gates_[current_gate_idx].pos - prev_pos_).norm();
+    const Scalar curr_dist = (gates_[current_gate_idx].pos - quad_state_.p).norm();
+    // Reward progress if the quadrotor moves closer to the gate.
+    // This difference will be positive if progress is made.
+    progress_reward = progress_coeff_ * (prev_dist - curr_dist);
+    // Penalize tracking error as the current distance to the gate.
+    tracking_error = tracking_coeff_ * curr_dist; // note: tracking_coeff_ should be > 0
+    if (curr_dist < gate_pass_threshold) {
+      gate_pass_bonus = pass_gate_reward;
+      current_gate_idx++;
+    }
   }
-  const Scalar progress_reward = progress_coeff_ * ((gates_[current_gate_idx].pos - prev_pos_).norm() - (gates_[current_gate_idx].pos - quad_state_.p).norm());
-  const Scalar tracking_error = -tracking_coeff_ * (gates_[current_gate_idx].pos - quad_state_.p).norm();
+  else {
+    Vector<3> euler;
+    quaternionToEuler(quad_state_.q(), euler);
+    const Scalar pos_error = (end_pos_ - quad_state_.p).norm();
+    const Scalar ori_error = (end_ori_ - euler).norm();
+    tracking_error = tracking_coeff_ * pos_error + tracking_coeff_ * ori_error;
+  }
 
   const Scalar total_reward =
-    progress_reward + tracking_error;
+    progress_reward + tracking_error + gate_pass_bonus;
 
-  reward << progress_reward, tracking_error,
-    total_reward;
+  reward << progress_reward, tracking_error, gate_pass_bonus, total_reward;
   return true;
 }
 
@@ -220,8 +241,14 @@ bool QuadrotorEnv::isTerminalState(Scalar &reward) {
     return true;
   }
 
-  if (cmd_.t >= max_t_ - sim_dt_) {
+  const Scalar curr_dist = (end_pos_ - quad_state_.p).norm();
+
+  if (current_gate_idx == num_gates && curr_dist < gate_pass_threshold) {
     reward = terminal_reward;
+    return true;
+  }
+
+  if (cmd_.t >= max_t_ - sim_dt_) {
     return true;
   }
   return false;
@@ -306,6 +333,8 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
     progress_coeff_ = cfg["rewards"]["progress_coeff"].as<Scalar>();
     tracking_coeff_ = cfg["rewards"]["tracking_coeff"].as<Scalar>();
     collision_penalty = cfg["rewards"]["collision"].as<Scalar>();
+    pass_gate_reward = cfg["rewards"]["pass_gate"].as<Scalar>();
+    gate_pass_threshold = cfg["rewards"]["gate_pass_threshold"].as<Scalar>();
     terminal_reward = cfg["rewards"]["terminal"].as<Scalar>();
     // load reward settings
     reward_names_ = cfg["rewards"]["names"].as<std::vector<std::string>>();
@@ -315,29 +344,16 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
     logger_.error("Cannot load [rewards] parameters");
     return false;
   }
-  init_pos = cfg["init_pos"].as<std::vector<double>>();
-  init_ori = cfg["init_ori"].as<std::vector<double>>();
 
-  // if (cfg["gates"]) {
-  //   gates_.clear();
-  //   num_gates = 0;
-  //   std::vector<std::string> gateKeys = cfg["gates"]["gate_order"].as<std::vector<std::string>>();
-  //   for (const std::string &key : gateKeys) {
-  //     Gate gt;
-  //     // Build the full path to the current gate's parameters.
-  //     std::vector<double> pos = cfg["gates"][key]["position"].as<std::vector<double>>();
-  //     std::vector<double> ori = cfg["gates"][key]["rotation"].as<std::vector<double>>();
-  //     // Assign the position and orientation.
-  //     gt.pos << pos[0], pos[1], pos[2];
-  //     gt.ori << ori[0], ori[1], ori[2];
-  //     num_gates++;
-  //     gt.id = num_gates;
-  //     gates_.push_back(gt);
-  //   }
-  // } else {
-  //   logger_.error("Cannot load [gate] parameters");
-  //   return false;
-  // }
+  if (cfg["initState"]) {
+    init_pos = cfg["initState"]["pos"].as<std::vector<double>>();
+    init_ori = cfg["initState"]["rot"].as<std::vector<double>>();
+  }
+  if (cfg["endState"]) {
+    end_pos = cfg["endState"]["pos"].as<std::vector<double>>();
+    end_ori = cfg["endState"]["rot"].as<std::vector<double>>();
+  }
+
   if (cfg["gates"]) {
     gates_.clear();
     num_gates = 0;

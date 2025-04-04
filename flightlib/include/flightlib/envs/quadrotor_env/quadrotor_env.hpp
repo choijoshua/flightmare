@@ -88,18 +88,21 @@ class QuadrotorEnv final : public EnvBase {
 
 
   // Define reward for training
-  Scalar progress_coeff_, tracking_coeff_, collision_penalty, terminal_reward;
+  Scalar progress_coeff_, tracking_coeff_, collision_penalty, pass_gate_reward, terminal_reward;
+  Scalar gate_pass_threshold;
   // observations and actions (for RL)
   Vector<quadenv::kNObs> pi_obs_;
   Vector<quadenv::kNAct> pi_act_;
 
   // reward function design (for model-free reinforcement learning)
-  Vector<3> init_pos_, init_ori_, prev_pos_;
+  Vector<3> init_pos_, init_ori_, end_pos_, end_ori_, prev_pos_;
   std::vector<double> init_pos, init_ori;
+  std::vector<double> end_pos, end_ori;
 
   std::vector<Gate> gates_;
   int current_gate_idx;
   int num_gates;
+  int num_gates_passed;
 
 
   // action and observation normalization (for learning)

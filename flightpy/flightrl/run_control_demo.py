@@ -80,7 +80,7 @@ def main():
             use_tanh_act=True,
             gae_lambda=0.95,
             gamma=0.99,
-            n_steps=500,
+            n_steps=1000,
             ent_coef=0.0,
             vf_coef=0.5,
             max_grad_norm=0.5,
@@ -92,7 +92,7 @@ def main():
         )
 
         #
-        model.learn(total_timesteps=int(1e7), log_interval=(10, 50))
+        model.learn(total_timesteps=int(1e8), log_interval=(10, 25))
     else:
         #
         weight = os.environ["FLIGHTMARE_PATH"] + "/flightpy/flightrl/saved/PPO_{0}/Policy/iter_{1:05d}.pth".format(args.trial, args.iter)
