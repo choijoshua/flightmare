@@ -88,7 +88,7 @@ class QuadrotorEnv final : public EnvBase {
 
 
   // Define reward for training
-  Scalar progress_coeff_, tracking_coeff_, collision_penalty, pass_gate_reward, terminal_reward;
+  Scalar progress_coeff_, tracking_coeff_, collision_penalty, pass_gate_reward, time_penalty, terminal_reward;
   Scalar gate_pass_threshold;
   // observations and actions (for RL)
   Vector<quadenv::kNObs> pi_obs_;

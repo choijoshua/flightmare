@@ -42,7 +42,7 @@ void QuadrotorEnv::init() {
   quad_ptr_->updateDynamics(dynamics);
 
   // define a bounding box {xmin, xmax, ymin, ymax, zmin, zmax}
-  world_box_ << -20, 20, -20, 20, -0.0, 20;
+  world_box_ << -25, 25, -25, 25, -0.0, 20;
   if (!quad_ptr_->setWorldBox(world_box_)) {
     logger_.error("cannot set wolrd box");
   };
@@ -132,51 +132,81 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs, bool random) { return reset(obs); }
 
 bool QuadrotorEnv::getObs(Ref<Vector<>> obs) {
   if (obs.size() != obs_dim_) {
-    logger_.error("Observation dimension mismatch. %d != %d", obs.size(),
-                  obs_dim_);
+    logger_.error("Observation dimension mismatch. %d != %d", obs.size(), obs_dim_);
     return false;
   }
-  prev_pos_ = quad_state_.p;
 
   quad_ptr_->getState(&quad_state_);
-
-  // quad_state_.p : P_w_bw
-  // ori : R_wb
-  // quad_state_.v : V_w_bw
-
-  // P_g_bg = R_gw * P_w_bw + R_gw *(-P_w_gw)
-  // V_g_bg = R_gw * V_w_bw + R_gw *(-P_w_gw)
-  // R_gb = R_gw * R_wb
-  // P_g_g+1_g = R_gw * P_w_g+1w + R_gw *(-P_w_gw)
-  // R_g_g+1 = R_gw * R_wg+1
-  Vector<3> P_w_gw = gates_[current_gate_idx].pos;
+  Vector<3> P_w_gw;
   Quaternion q_wg;
-  eulerToQuaternion(q_wg, gates_[current_gate_idx].ori);
+
+  if (current_gate_idx >= num_gates) {
+    P_w_gw = end_pos_;
+    eulerToQuaternion(q_wg, end_ori_);
+  }
+  else {
+    P_w_gw = gates_[current_gate_idx].pos;
+    eulerToQuaternion(q_wg, gates_[current_gate_idx].ori);
+  }
+
   Matrix<3,3> R_wg = q_wg.toRotationMatrix();
-  Vector<3> P_g_bg = R_wg.inverse() * (quad_state_.p - P_w_gw);
-  Vector<3> V_g_bg = R_wg.inverse() * quad_state_.v;
-  Matrix<3,3> R_gb_matrix = (R_wg.inverse() * quad_state_.R()).eval();
+
+  Matrix<3,3> R_wg_inv;
+  if (fabs(R_wg.determinant()) < 1e-6) {
+    logger_.warn("Near-singular gate rotation matrix, skipping observation.");
+    return false;
+  }
+  R_wg_inv = R_wg.inverse();
+
+  Vector<3> P_g_bg = R_wg_inv * (quad_state_.p - P_w_gw);
+  Vector<3> V_g_bg = R_wg_inv * quad_state_.v;
+  Matrix<3,3> R_gb_matrix = (R_wg_inv * quad_state_.R()).eval();
   Vector<9> R_gb = Map<Vector<>>(R_gb_matrix.data(), R_gb_matrix.size());
 
-  Vector<3> P_g_g1g;
-  P_g_g1g << 0, 0, 0;
-  Vector<9> R_gg1;
-  R_gg1 << 1, 0, 0, 0, 1, 0, 0, 0, 1;
+  Vector<3> P_g_g1g = Vector<3>::Zero();
+  Vector<9> R_gg1; R_gg1 << 1, 0, 0, 0, 1, 0, 0, 0, 1;
 
-  if (current_gate_idx < num_gates-1) {
-    Vector<3> P_w_g1w = gates_[current_gate_idx+1].pos;
+  if (current_gate_idx < num_gates - 1) {
+    Vector<3> P_w_g1w = gates_[current_gate_idx + 1].pos;
     Quaternion q_wg1;
-    eulerToQuaternion(q_wg1, gates_[current_gate_idx+1].ori);
+    eulerToQuaternion(q_wg1, gates_[current_gate_idx + 1].ori);
     Matrix<3,3> R_wg1 = q_wg1.toRotationMatrix();
-    P_g_g1g = R_wg.inverse() * (P_w_g1w - P_w_gw); // position of next gate in current gate frame
-    Matrix<3,3> R_gg1_matrix = (R_wg.inverse() * R_wg1).eval(); // frame transformation from next gate to current gate
+
+    if (fabs(R_wg1.determinant()) < 1e-6) {
+      logger_.warn("Near-singular next-gate rotation matrix, skipping observation.");
+      return false;
+    }
+
+    P_g_g1g = R_wg_inv * (P_w_g1w - P_w_gw);
+    Matrix<3,3> R_gg1_matrix = (R_wg_inv * R_wg1).eval();
     R_gg1 = Map<Vector<>>(R_gg1_matrix.data(), R_gg1_matrix.size());
   }
 
+  // Compose final obs
   obs.segment<quadenv::kNObs>(quadenv::kObs) << P_g_bg, R_gb, V_g_bg, P_g_g1g, R_gg1;
+
+  // Check for NaNs, infs
+  if (!obs.allFinite()) {
+    logger_.error("Non-finite observation detected! obs = %s", obs.transpose().format(Eigen::IOFormat()));
+    return false;
+  }
+
+  // Optional: check individual norm safety (just logging for now)
+  if (P_g_bg.norm() > 1e6 || V_g_bg.norm() > 1e6) {
+    logger_.warn("Unusually large P_g_bg or V_g_bg norm. P: %f, V: %f", P_g_bg.norm(), V_g_bg.norm());
+    std::cout << P_g_bg << std::endl;
+    std::cout << R_wg_inv << std::endl;
+    std::cout << quad_state_.p << std::endl;
+    std::cout << gates_[current_gate_idx].pos << std::endl;
+    std::cout << current_gate_idx << std::endl;
+    for (int i = 0; i < num_gates; i++) {
+      std::cout << "Gate number " << i << " is " << gates_[i].pos << std::endl;
+    }
+  }
 
   return true;
 }
+
 
 bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
                         Ref<Vector<>> reward) {
@@ -194,7 +224,7 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
     cmd_.collective_thrust = pi_act_(0);
     cmd_.omega = pi_act_.segment<3>(1);
   }
-
+  prev_pos_ = quad_state_.p;
   // simulate quadrotor
   quad_ptr_->run(cmd_, sim_dt_);
 
@@ -207,6 +237,17 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
   Scalar progress_reward = 0;
   Scalar gate_pass_bonus = 0;
   Scalar tracking_error = 0;
+  Scalar current_segment_dist = 0;
+  if (current_gate_idx == 0) {
+    current_segment_dist = (gates_[current_gate_idx].pos - init_pos_).norm();
+  }
+  else if (current_gate_idx < num_gates) {
+    current_segment_dist = (gates_[current_gate_idx].pos - gates_[current_gate_idx-1].pos).norm();
+  }
+  else {
+    current_segment_dist = (end_pos_ - gates_[current_gate_idx].pos).norm();
+  }
+
   if (current_gate_idx < num_gates) {
     const Scalar prev_dist = (gates_[current_gate_idx].pos - prev_pos_).norm();
     const Scalar curr_dist = (gates_[current_gate_idx].pos - quad_state_.p).norm();
@@ -214,7 +255,7 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
     // This difference will be positive if progress is made.
     progress_reward = progress_coeff_ * (prev_dist - curr_dist);
     // Penalize tracking error as the current distance to the gate.
-    tracking_error = tracking_coeff_ * curr_dist; // note: tracking_coeff_ should be > 0
+    tracking_error = tracking_coeff_ * curr_dist/current_segment_dist; // note: tracking_coeff_ should be > 0
     if (curr_dist < gate_pass_threshold) {
       gate_pass_bonus = pass_gate_reward;
       current_gate_idx++;
@@ -225,13 +266,13 @@ bool QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs,
     quaternionToEuler(quad_state_.q(), euler);
     const Scalar pos_error = (end_pos_ - quad_state_.p).norm();
     const Scalar ori_error = (end_ori_ - euler).norm();
-    tracking_error = tracking_coeff_ * pos_error + tracking_coeff_ * ori_error;
+    tracking_error = tracking_coeff_ * pos_error/current_segment_dist + tracking_coeff_ * ori_error;
   }
 
   const Scalar total_reward =
-    progress_reward + tracking_error + gate_pass_bonus;
+    progress_reward + tracking_error + time_penalty + gate_pass_bonus;
 
-  reward << progress_reward, tracking_error, gate_pass_bonus, total_reward;
+  reward << progress_reward, tracking_error, gate_pass_bonus, time_penalty, total_reward;
   return true;
 }
 
@@ -335,6 +376,7 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
     collision_penalty = cfg["rewards"]["collision"].as<Scalar>();
     pass_gate_reward = cfg["rewards"]["pass_gate"].as<Scalar>();
     gate_pass_threshold = cfg["rewards"]["gate_pass_threshold"].as<Scalar>();
+    time_penalty = cfg["rewards"]["time_penalty"].as<Scalar>();
     terminal_reward = cfg["rewards"]["terminal"].as<Scalar>();
     // load reward settings
     reward_names_ = cfg["rewards"]["names"].as<std::vector<std::string>>();
