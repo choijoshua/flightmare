@@ -1,4 +1,5 @@
 #include "flightlib/common/math.hpp"
+
 #include "iostream"
 
 namespace flightlib {
@@ -141,6 +142,26 @@ void quaternionToEuler(const Quaternion& quat, Ref<Vector<3>> euler) {
                            quat.y() * quat.y() - quat.z() * quat.z());
 }
 
+void eulerToQuaternion(Quaternion& q, const Ref<Vector<3>> euler) {
+  // Calculate half angles
+  double halfRoll = euler.x() * 0.5;
+  double halfPitch = euler.y() * 0.5;
+  double halfYaw = euler.z() * 0.5;
+  
+  // Compute sin and cos for each half angle
+  double sinRoll = std::sin(halfRoll);
+  double cosRoll = std::cos(halfRoll);
+  double sinPitch = std::sin(halfPitch);
+  double cosPitch = std::cos(halfPitch);
+  double sinYaw = std::sin(halfYaw);
+  double cosYaw = std::cos(halfYaw);
+  
+  // Calculate quaternion components
+  q.w() = cosRoll * cosPitch * cosYaw + sinRoll * sinPitch * sinYaw;
+  q.x() = sinRoll * cosPitch * cosYaw - cosRoll * sinPitch * sinYaw;
+  q.y() = cosRoll * sinPitch * cosYaw + sinRoll * cosPitch * sinYaw;
+  q.z() = cosRoll * cosPitch * sinYaw - sinRoll * sinPitch * cosYaw;
+}
 
 std::vector<Scalar> transformationRos2Unity(const Matrix<4, 4>& ros_tran_mat) {
   /// [ Transformation Matrix ] from ROS coordinate system (right hand)
@@ -150,11 +171,11 @@ std::vector<Scalar> transformationRos2Unity(const Matrix<4, 4>& ros_tran_mat) {
   tran_mat(1, 2) = 1.0;
   tran_mat(2, 1) = 1.0;
   tran_mat(3, 3) = 1.0;
+
   //
-  Matrix<4, 4> unity_tran_mat = tran_mat * ros_tran_mat * tran_mat.transpose();
-  // std::vector<Scalar> unity_tran_mat_vec(
-  //   unity_tran_mat.data(),
-  //   unity_tran_mat.data() + unity_tran_mat.rows() * unity_tran_mat.cols());
+  Matrix<4, 4> unity_tran_mat = tran_mat * ros_tran_mat;
+  Matrix<4, 4> tran_mat_transpose = tran_mat.transpose();
+  unity_tran_mat = unity_tran_mat * tran_mat_transpose;
   std::vector<Scalar> tran_unity;
   for (int i = 0; i < 4; ++i) {
     for (int j = 0; j < 4; ++j) {
@@ -164,17 +185,11 @@ std::vector<Scalar> transformationRos2Unity(const Matrix<4, 4>& ros_tran_mat) {
   return tran_unity;
 }
 
-std::vector<Scalar> quaternionRos2Unity(const Quaternion& ros_quat) {
+std::vector<Scalar> quaternionRos2Unity(const Quaternion ros_quat) {
   /// [ Quaternion ] from ROS coordinate system (right hand)
   /// to Unity coordinate system (left hand)
-  Matrix<3, 3> rot_mat = Matrix<3, 3>::Zero();
-  rot_mat(0, 0) = 1.0;
-  rot_mat(1, 2) = 1.0;
-  rot_mat(2, 1) = 1.0;
-  //
-  Matrix<3, 3> unity_rot_mat =
-    rot_mat * ros_quat.toRotationMatrix() * rot_mat.transpose();
-  Quaternion unity_quat(unity_rot_mat);
+  Quaternion unity_quat(ros_quat.w(), -ros_quat.x(), -ros_quat.z(),
+                        -ros_quat.y());
   std::vector<Scalar> unity_quat_vec{unity_quat.x(), unity_quat.y(),
                                      unity_quat.z(), unity_quat.w()};
   return unity_quat_vec;
@@ -193,6 +208,22 @@ std::vector<Scalar> scalarRos2Unity(const Vector<3>& ros_scalar) {
   /// to Unity coordinate system (left hand)
   std::vector<Scalar> unity_scalar{ros_scalar(0), ros_scalar(2), ros_scalar(1)};
   return unity_scalar;
+}
+
+
+Vector<3> cartesianToSpherical(const Ref<Vector<3>> cart_vec) {
+  return (Vector<3>() << cart_vec.norm(), std::atan2(cart_vec(1), cart_vec(0)),
+          std::atan2(cart_vec.segment(0, 2).norm(), cart_vec(2)))
+    .finished();
+}
+
+Matrix<4, 4> inversePoseMatrix(const Ref<Matrix<4, 4>> t_mat) {
+  Matrix<4, 4> inv_t_mat;
+  inv_t_mat.row(3) << 0.0, 0.0, 0.0, 1.0;
+  inv_t_mat.block<3, 3>(0, 0) = t_mat.block<3, 3>(0, 0).transpose();
+  inv_t_mat.block<3, 1>(0, 3) =
+    -t_mat.block<3, 3>(0, 0).transpose() * t_mat.block<3, 1>(0, 3);
+  return inv_t_mat;
 }
 
 }  // namespace flightlib

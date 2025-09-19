@@ -6,7 +6,7 @@
 
 // std libs
 #include <unistd.h>
-#include <experimental/filesystem>
+
 #include <fstream>
 #include <map>
 #include <string>
@@ -44,8 +44,8 @@ class UnityBridge {
   bool disconnectUnity(void);
 
   // public get functions
-  bool getRender(const FrameID frame_id);
-  bool handleOutput();
+  bool getRender(const FrameID sent_frame_id);
+  FrameID handleOutput(const FrameID sent_frame_id);
   bool getPointCloud(PointCloudMessage_t &pointcloud_msg,
                      Scalar time_out = 600.0);
 
@@ -60,6 +60,10 @@ class UnityBridge {
   // public auxiliary functions
   inline void setPubPort(const std::string &pub_port) { pub_port_ = pub_port; };
   inline void setSubPort(const std::string &sub_port) { sub_port_ = sub_port; };
+  inline void setPositionOffset(const Ref<Vector<3>> pos_offset) {
+    position_offset_ = pos_offset;
+  };
+
   // create unity bridge
   static std::shared_ptr<UnityBridge> getInstance(void) {
     static std::shared_ptr<UnityBridge> bridge_ptr =
@@ -89,6 +93,8 @@ class UnityBridge {
   bool sendInitialSettings(void);
   bool handleSettings(void);
 
+  Vector<3> position_offset_{0, 0, 0};
+
   // timing variables
   int64_t num_frames_;
   int64_t last_downloaded_utime_;
@@ -96,7 +102,9 @@ class UnityBridge {
   int64_t u_packet_latency_;
 
   // axuiliary variables
+  const int max_output_request_{100};
   const Scalar unity_connection_time_out_{60.0};
   bool unity_ready_{false};
 };
+
 }  // namespace flightlib
